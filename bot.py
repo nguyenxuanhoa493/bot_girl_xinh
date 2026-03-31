@@ -649,7 +649,7 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
-
+async def addcat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Thêm category mới: /addcat <tên>"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Bạn không có quyền.")
