@@ -12,8 +12,8 @@ from urllib.parse import quote, quote_plus
 
 from dotenv import load_dotenv
 from pinscrape import Pinterest
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ForceReply
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 load_dotenv()
 
@@ -26,54 +26,6 @@ logger = logging.getLogger(__name__)
 # ============ TỪ KHÓA PINTEREST THEO THỂ LOẠI ============
 
 KEYWORDS_DB = Path(__file__).parent / "data" / "keywords.db"
-
-_DEFAULT_KEYWORDS: dict[str, list[str]] = {
-    "girl": [
-        "gái xinh", "girl xinh việt nam", "hot girl việt",
-        "gái xinh tiktok", "hot girl tiktok việt nam",
-        "gái xinh instagram", "nữ sinh việt nam xinh đẹp",
-        "hot girl 2k", "gái xinh dễ thương",
-        "hot girl hà nội", "hot girl sài gòn",
-        "ảnh gái xinh", "girl xinh không che",
-    ],
-    "sexy": [
-        "gái xinh sexy", "gái xinh nóng bỏng",
-        "hot girl sexy việt nam", "ảnh nóng girl xinh",
-        "gái xinh gợi cảm", "sexy girl asian",
-        "gái xinh khoe dáng", "body girl xinh",
-        "hot teen sexy", "gái xinh vòng 1",
-        "ảnh sexy không che", "người mẫu nội y việt nam",
-        "girl xinh gym", "gái xinh phòng gym",
-    ],
-    "bikini": [
-        "gái xinh bikini", "bikini vietnam girl",
-        "hot girl bikini biển", "gái xinh đi biển",
-        "bikini teen girl", "ảnh bikini nóng bỏng",
-        "girl xinh áo tắm", "bikini body girl",
-        "hot girl pool party", "gái xinh hồ bơi",
-        "bikini sexy asian", "swimsuit model girl",
-    ],
-    "cosplay": [
-        "cosplay girl sexy", "cosplay anime girl",
-        "cosplay việt nam", "cosplay genshin impact",
-        "cosplay one piece girl", "cosplay naruto girl",
-        "cosplay bunny girl", "cosplay maid",
-        "cosplay school girl", "cosplay nóng bỏng",
-        "cosplay waifu", "cosplay demon slayer girl",
-    ],
-    "asian": [
-        "kpop idol girl", "ulzzang girl",
-        "korean girl fashion", "japanese girl cute",
-        "blackpink jennie", "twice momo",
-        "hot girl hàn quốc", "hot girl nhật bản",
-        "chinese beauty girl", "thai girl beautiful",
-        "idol kpop sexy", "girl crush kpop",
-    ],
-    "onlyfans": [
-        "onlyfans", "bán quạt", "gai xinh onlyfans", "hot girl onlyfans",
-        "baby sugar onlyfans", "gái xinh bán quạt", "gái xinh gợi cảm onlyfans",
-    ],
-}
 
 
 def _get_db() -> sqlite3.Connection:
@@ -89,12 +41,9 @@ def _get_db() -> sqlite3.Connection:
 
 
 def load_keywords() -> dict[str, list[str]]:
-    """Tải từ khóa từ SQLite; tự seed _DEFAULT_KEYWORDS nếu DB trống."""
+    """Tải từ khóa từ SQLite."""
     with _get_db() as conn:
         rows = conn.execute("SELECT category, keyword FROM keywords ORDER BY category, rowid").fetchall()
-    if not rows:
-        save_keywords(_DEFAULT_KEYWORDS)
-        return {k: list(v) for k, v in _DEFAULT_KEYWORDS.items()}
     result: dict[str, list[str]] = {}
     for cat, kw in rows:
         result.setdefault(cat, []).append(kw)
@@ -324,29 +273,6 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
 def get_pinterest_image(category: str) -> tuple[str, str, str] | None:
     """Trả về (url, title, caption) ảnh Pinterest có người; None nếu không tìm được."""
 
-    # ── Modifier pool: nối ngẫu nhiên vào keyword để tạo đa dạng ──
-    _STYLE_MODS = [
-        "aesthetic", "outfit", "fashion", "style", "casual", "streetwear",
-        "ootd", "trendy", "vibe", "look",
-    ]
-    _AGE_MODS = [
-        "teen", "18+", "trẻ", "2k", "2k5", "2k6", "2k7", "tuổi teen",
-        "nữ sinh", "girl next door",
-    ]
-    _SEXY_MODS = [
-        "gợi cảm", "nóng bỏng", "sexy", "body đẹp", "curves",
-        "quyến rũ", "thả dáng", "khoe dáng", "lingerie", "bikini body",
-    ]
-    _ALL_MODS = _STYLE_MODS + _AGE_MODS + _SEXY_MODS
-
-    def _pick_modifier() -> str:
-        """Chọn 1 modifier ngẫu nhiên (70% theo category, 30% random pool)."""
-        if category in ("sexy", "onlyfans") and random.random() < 0.7:
-            return random.choice(_SEXY_MODS)
-        if category == "cosplay":
-            return ""   # cosplay không cần modifier
-        return random.choice(_ALL_MODS)
-
     # Pool động: shuffle toàn bộ keyword, thử lần lượt đến khi ra ảnh hoặc hết
     cat_kws = KEYWORDS.get(category, KEYWORDS["girl"])
     pool = list(cat_kws)  # bản sao để pop, không ảnh hưởng KEYWORDS gốc
@@ -356,28 +282,20 @@ def get_pinterest_image(category: str) -> tuple[str, str, str] | None:
     MAX_TRY = min(6, len(pool))  # thử tối đa 6 keyword mỗi lần gọi
 
     while pool and tried < MAX_TRY:
-        orig_kw = pool.pop(0)
+        kw = pool.pop(0)
         tried += 1
-        modifier = _pick_modifier()
-        kw = f"{orig_kw} {modifier} 2026".strip() if modifier else f"{orig_kw} 2026"
         try:
             logger.debug(f"[Pinterest] Tìm '{kw}' (category={category}, lần {tried})...")
             items = _search_with_meta(kw, FETCH_COUNT)
             logger.debug(f"[Pinterest] '{kw}' -> {len(items)} ảnh")
 
             if not items:
-                # Thử lại không có modifier trước khi xóa
-                if modifier:
-                    kw_plain = orig_kw + " 2026"
-                    items = _search_with_meta(kw_plain, FETCH_COUNT)
-
-            if not items:
                 # Xóa keyword chết khỏi database, giữ ít nhất 3 keyword/category
                 live_kws = KEYWORDS.get(category, [])
-                if orig_kw in live_kws and len(live_kws) > 3:
-                    live_kws.remove(orig_kw)
+                if kw in live_kws and len(live_kws) > 3:
+                    live_kws.remove(kw)
                     save_keywords(KEYWORDS)
-                    logger.info(f"[Pinterest] 🗑️ Đã xóa keyword hết kết quả: '{orig_kw}'")
+                    logger.info(f"[Pinterest] 🗑️ Đã xóa keyword hết kết quả: '{kw}'")
                 continue
 
             random.shuffle(items)
@@ -647,23 +565,20 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     elif data.startswith("add_prompt:"):
         category = data[11:]
-        await query.edit_message_text(
-            f"➕ Gõ lệnh để thêm từ khóa vào <b>{category}</b>:\n"
-            f"<code>/addkw {category} từ khóa mới</code>",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Quay lại", callback_data=f"cat:{category}"),
-            ]]),
+        await query.message.reply_text(
+            f"➕ Nhập từ khóa mới cho <b>{category}</b>:",
+            reply_markup=ForceReply(selective=True, input_field_placeholder="từ khóa..."),
             parse_mode="HTML",
         )
+        context.user_data["pending_action"] = "addkw"
+        context.user_data["pending_category"] = category
 
     elif data == "addcat_prompt":
-        await query.edit_message_text(
-            "➕ Gõ lệnh để thêm category mới:\n"
-            "<code>/addcat &lt;tên category&gt;</code>\n"
-            "Ví dụ: <code>/addcat lingerie</code>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="admin_back")]]),
-            parse_mode="HTML",
+        await query.message.reply_text(
+            "➕ Nhập tên category mới:",
+            reply_markup=ForceReply(selective=True, input_field_placeholder="tên category..."),
         )
+        context.user_data["pending_action"] = "addcat"
 
     elif data == "delcat_menu":
         await query.edit_message_text(
@@ -696,7 +611,45 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
-async def addcat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xử lý reply từ ForceReply trong admin menu."""
+    action = context.user_data.pop("pending_action", None)
+    if not action:
+        return
+
+    text = update.message.text.strip()
+
+    if action == "addcat":
+        name = text.lower()
+        if name in KEYWORDS:
+            await update.message.reply_text(f"⚠️ Category <code>{name}</code> đã tồn tại.", parse_mode="HTML")
+            return
+        KEYWORDS[name] = []
+        save_keywords(KEYWORDS)
+        await update.message.reply_text(
+            f"✅ Đã tạo category <b>{name}</b>. Thêm từ khóa qua /admin nhé!",
+            parse_mode="HTML",
+        )
+
+    elif action == "addkw":
+        category = context.user_data.pop("pending_category", None)
+        if not category:
+            return
+        if category not in KEYWORDS:
+            await update.message.reply_text(f"❌ Category <code>{category}</code> không tồn tại.", parse_mode="HTML")
+            return
+        if text in KEYWORDS[category]:
+            await update.message.reply_text(f"⚠️ Từ khóa <code>{text}</code> đã tồn tại.", parse_mode="HTML")
+            return
+        KEYWORDS[category].append(text)
+        save_keywords(KEYWORDS)
+        await update.message.reply_text(
+            f"✅ Đã thêm <code>{text}</code> vào category <b>{category}</b>",
+            parse_mode="HTML",
+        )
+
+
+
     """Thêm category mới: /addcat <tên>"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Bạn không có quyền.")
@@ -772,6 +725,7 @@ def main() -> None:
 
     app = Application.builder().token(token).post_init(_set_commands).build()
 
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_reply))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("girl", girl))
@@ -789,7 +743,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^(cat:|del:|add_prompt:|admin_back|noop|addcat_prompt|delcat_menu|delcat:|delcat_confirm:)"))
 
     logger.info("🚀 Bot đang chạy...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
