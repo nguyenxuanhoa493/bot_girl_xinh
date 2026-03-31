@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python3 migrate\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

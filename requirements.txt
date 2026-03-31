@@ -1,0 +1,6 @@
+python-telegram-bot==21.6
+requests==2.32.3
+python-dotenv==1.0.1
+pinscrape==5.1.0
+opencv-python-headless
+numpy
