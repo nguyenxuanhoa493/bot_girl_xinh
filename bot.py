@@ -323,6 +323,30 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
 
 def get_pinterest_image(category: str) -> tuple[str, str, str] | None:
     """Trả về (url, title, caption) ảnh Pinterest có người; None nếu không tìm được."""
+
+    # ── Modifier pool: nối ngẫu nhiên vào keyword để tạo đa dạng ──
+    _STYLE_MODS = [
+        "aesthetic", "outfit", "fashion", "style", "casual", "streetwear",
+        "ootd", "trendy", "vibe", "look",
+    ]
+    _AGE_MODS = [
+        "teen", "18+", "trẻ", "2k", "2k5", "2k6", "2k7", "tuổi teen",
+        "nữ sinh", "girl next door",
+    ]
+    _SEXY_MODS = [
+        "gợi cảm", "nóng bỏng", "sexy", "body đẹp", "curves",
+        "quyến rũ", "thả dáng", "khoe dáng", "lingerie", "bikini body",
+    ]
+    _ALL_MODS = _STYLE_MODS + _AGE_MODS + _SEXY_MODS
+
+    def _pick_modifier() -> str:
+        """Chọn 1 modifier ngẫu nhiên (70% theo category, 30% random pool)."""
+        if category in ("sexy", "onlyfans") and random.random() < 0.7:
+            return random.choice(_SEXY_MODS)
+        if category == "cosplay":
+            return ""   # cosplay không cần modifier
+        return random.choice(_ALL_MODS)
+
     # Pool động: shuffle toàn bộ keyword, thử lần lượt đến khi ra ảnh hoặc hết
     cat_kws = KEYWORDS.get(category, KEYWORDS["girl"])
     pool = list(cat_kws)  # bản sao để pop, không ảnh hưởng KEYWORDS gốc
@@ -334,11 +358,18 @@ def get_pinterest_image(category: str) -> tuple[str, str, str] | None:
     while pool and tried < MAX_TRY:
         orig_kw = pool.pop(0)
         tried += 1
-        kw = orig_kw + " 2026"
+        modifier = _pick_modifier()
+        kw = f"{orig_kw} {modifier} 2026".strip() if modifier else f"{orig_kw} 2026"
         try:
             logger.debug(f"[Pinterest] Tìm '{kw}' (category={category}, lần {tried})...")
             items = _search_with_meta(kw, FETCH_COUNT)
             logger.debug(f"[Pinterest] '{kw}' -> {len(items)} ảnh")
+
+            if not items:
+                # Thử lại không có modifier trước khi xóa
+                if modifier:
+                    kw_plain = orig_kw + " 2026"
+                    items = _search_with_meta(kw_plain, FETCH_COUNT)
 
             if not items:
                 # Xóa keyword chết khỏi database, giữ ít nhất 3 keyword/category
@@ -347,7 +378,6 @@ def get_pinterest_image(category: str) -> tuple[str, str, str] | None:
                     live_kws.remove(orig_kw)
                     save_keywords(KEYWORDS)
                     logger.info(f"[Pinterest] 🗑️ Đã xóa keyword hết kết quả: '{orig_kw}'")
-                # Tiếp tục thử keyword tiếp trong pool (đã có sẵn trong while)
                 continue
 
             random.shuffle(items)
@@ -416,30 +446,40 @@ async def send_pinterest_photo(
     chat = update.effective_chat
     logger.info(f"[CMD] @{user.username}({user.id}) chat={chat.title or chat.id} -> /{category}")
     msg = await update.message.reply_text(loading_text)
-    try:
-        result = get_pinterest_image(category)
-        if not result:
-            await msg.edit_text("❌ Không tìm được ảnh, thử lại sau nhé!")
+    MAX_RETRY = 3
+    for attempt in range(1, MAX_RETRY + 1):
+        try:
+            if attempt > 1:
+                retry_text = get_response(category, "loading")
+                await msg.edit_text(f"🔄 Thử lần {attempt}... {retry_text}")
+            result = get_pinterest_image(category)
+            if not result:
+                if attempt < MAX_RETRY:
+                    logger.warning(f"[CMD] Lần {attempt} không ra ảnh, thử lại...")
+                    continue
+                await msg.edit_text("❌ Không tìm được ảnh, thử lại sau nhé!")
+                return
+            url, pin_title, pin_caption = result
+            logger.info(f"[CMD] Gửi ảnh cho @{user.username} (lần {attempt}): {url}")
+
+            title   = pin_title   or fallback_title
+            caption = pin_caption or fallback_caption
+
+            parts = []
+            if title:
+                parts.append(f"<b>{title}</b>")
+            if caption:
+                parts.append(caption)
+            full_caption = "\n".join(parts)
+
+            await update.message.reply_photo(photo=url, caption=full_caption, parse_mode="HTML")
+            await msg.delete()
             return
-        url, pin_title, pin_caption = result
-        logger.info(f"[CMD] Gửi ảnh cho @{user.username}: {url}")
-
-        # Ưu tiên metadata thật từ Pinterest, fallback về giá trị mặc định
-        title   = pin_title   or fallback_title
-        caption = pin_caption or fallback_caption
-
-        parts = []
-        if title:
-            parts.append(f"<b>{title}</b>")
-        if caption:
-            parts.append(caption)
-        full_caption = "\n".join(parts)
-
-        await update.message.reply_photo(photo=url, caption=full_caption, parse_mode="HTML")
-        await msg.delete()
-    except Exception as e:
-        logger.error(f"[CMD] Lỗi gửi ảnh: {e}", exc_info=True)
-        await msg.edit_text("❌ Không lấy được ảnh, thử lại sau nhé!")
+        except Exception as e:
+            logger.error(f"[CMD] Lỗi gửi ảnh lần {attempt}: {e}", exc_info=True)
+            if attempt < MAX_RETRY:
+                continue
+            await msg.edit_text("❌ Không lấy được ảnh, thử lại sau nhé!")
 
 
 async def girl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
