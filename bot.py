@@ -12,7 +12,7 @@ from urllib.parse import quote, quote_plus
 
 from dotenv import load_dotenv
 from pinscrape import Pinterest
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 load_dotenv()
@@ -370,6 +370,7 @@ _FIXED_CMDS = [
     ("🎲", "random", "Để em chọn cho sếp~"),
     ("🔍", "s", "Tìm theo ý sếp <i>&lt;từ khóa&gt;</i>"),
     ("💡", "help", "Hướng dẫn"),
+    ("🔧", "admin", "Quản lý từ khóa & category"),
 ]
 
 _CAT_EMOJI = {
@@ -708,12 +709,28 @@ async def addkw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def _set_commands(app: Application) -> None:
+    """Đăng ký danh sách lệnh để Telegram hiện gợi ý khi gõ /."""
+    commands = []
+    for cat in KEYWORDS:
+        emoji = _CAT_EMOJI.get(cat, "📷")
+        commands.append(BotCommand(cat, f"{emoji} {cat.capitalize()}"))
+    commands += [
+        BotCommand("random", "🎲 Để em chọn cho sếp~"),
+        BotCommand("s", "🔍 Tìm theo từ khóa"),
+        BotCommand("help", "💡 Hướng dẫn"),
+        BotCommand("admin", "🔧 Quản lý từ khóa & category"),
+    ]
+    await app.bot.set_my_commands(commands)
+    logger.info(f"[Bot] Đã đăng ký {len(commands)} lệnh")
+
+
 def main() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("Chưa cấu hình TELEGRAM_BOT_TOKEN trong file .env")
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_set_commands).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
