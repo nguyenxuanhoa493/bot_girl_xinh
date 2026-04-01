@@ -337,9 +337,23 @@ def _search_with_meta(query: str, page_size: int = 20, rs: str = "typed") -> lis
         return []
 
     raw_results = resp.json().get("resource_response", {}).get("data", {}).get("results", [])
+    items = _parse_results(raw_results)
+
+    # Fallback: dùng pinscrape nếu API chính không trả kết quả
+    if not items:
+        logger.info(f"[Pinterest] API chính trả 0 kết quả, fallback pinscrape cho '{query}'")
+        try:
+            urls = pinterest.search(query, page_size)
+            items = [{"url": u, "title": "", "caption": "", "width": 0, "height": 0} for u in urls]
+        except Exception as e:
+            logger.warning(f"[Pinterest] Fallback pinscrape cũng lỗi: {e}")
+
+    return items
+
+
+def _parse_results(raw_results: list) -> list[dict]:
     items = []
     for r in raw_results:
-        # Bỏ qua video và story pin — không phải ảnh tĩnh
         if r.get("is_video") or r.get("type") in ("story", "story_pin"):
             continue
         images = r.get("images") or {}
@@ -352,7 +366,6 @@ def _search_with_meta(query: str, page_size: int = 20, rs: str = "typed") -> lis
         title   = (r.get("title") or r.get("grid_title") or "").strip()
         caption = (r.get("description") or r.get("alt_text") or "").strip()
         items.append({"url": img_url, "title": title, "caption": caption, "width": w, "height": h})
-    # Ưu tiên ảnh dọc (portrait) — ảnh người/gái gần như luôn dọc
     items.sort(key=lambda x: x["height"] / max(x["width"], 1), reverse=True)
     return items
 
