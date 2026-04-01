@@ -554,15 +554,16 @@ async def s_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.edit_text(f"❌ Không tìm thấy ảnh cho '{keyword}', thử từ khóa khác!")
             return
 
-        # Thử person detection trên top 3, fallback về top 1 nếu không có
+        random.shuffle(items)
         chosen_item = None
-        for item in items[:3]:
+        for item in items[:10]:
             url_candidate = item["url"].replace("/236x/", "/originals/")
             if has_person(url_candidate):
                 chosen_item = {**item, "url": url_candidate}
                 break
         if not chosen_item:
-            chosen_item = {**items[0], "url": items[0]["url"].replace("/236x/", "/originals/")}
+            pick = random.choice(items)
+            chosen_item = {**pick, "url": pick["url"].replace("/236x/", "/originals/")}
 
         logger.info(f"[Search] Gửi ảnh cho @{user.username}: {chosen_item['url']}")
         parts = [f"🔍 Kết quả cho: <b>{keyword}</b>"]
