@@ -453,7 +453,7 @@ async def s_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.edit_text(f"❌ Không tìm thấy ảnh cho '{keyword}', thử từ khóa khác!")
             return
 
-        chosen = str(random.choice(urls))
+        chosen = str(random.choice(urls[:3]))
         chosen = chosen.replace("/236x/", "/originals/")
         logger.info(f"[Search] Gửi ảnh cho @{user.username}: {chosen}")
         await update.message.reply_photo(
