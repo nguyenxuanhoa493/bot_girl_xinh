@@ -250,8 +250,21 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
         f"?source_url={quote_plus(source_url)}&data={encoded}&_={pinterest.time_epoch}"
     )
     headers = pinterest.BASE_HEADERS.copy()
-    headers["X-Pinterest-Source-Url"] = source_url
-    headers["Accept-Language"] = "vi,en-US;q=0.9,en;q=0.8"
+    headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
+        "X-Pinterest-Source-Url": source_url,
+        "X-Pinterest-Pws-Handler": "www/search/[scope].js",
+        "X-Pinterest-Appstate": "active",
+        "X-App-Version": "b85ab6b",
+        "X-Requested-With": "XMLHttpRequest",
+        "Sec-Ch-Ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    })
 
     resp = pinterest.session.get(url, headers=headers, proxies=pinterest.proxies)
     if resp.status_code != 200:
@@ -260,14 +273,21 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
     raw_results = resp.json().get("resource_response", {}).get("data", {}).get("results", [])
     items = []
     for r in raw_results:
+        # Bỏ qua video và story pin — không phải ảnh tĩnh
+        if r.get("is_video") or r.get("type") in ("story", "story_pin"):
+            continue
         images = r.get("images") or {}
         orig = images.get("orig") or {}
         img_url = orig.get("url", "")
         if not img_url:
             continue
+        w = orig.get("width", 0) or 0
+        h = orig.get("height", 0) or 0
         title   = (r.get("title") or r.get("grid_title") or "").strip()
         caption = (r.get("description") or r.get("alt_text") or "").strip()
-        items.append({"url": img_url, "title": title, "caption": caption})
+        items.append({"url": img_url, "title": title, "caption": caption, "width": w, "height": h})
+    # Ưu tiên ảnh dọc (portrait) — ảnh người/gái gần như luôn dọc
+    items.sort(key=lambda x: x["height"] / max(x["width"], 1), reverse=True)
     return items
 
 
