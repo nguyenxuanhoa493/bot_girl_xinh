@@ -1,9 +1,25 @@
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
 from dotenv import load_dotenv
+
+# Import hàm tìm kiếm từ bot.py
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    from bot import _search_with_meta, apply_pinterest_cookies
+    _SEARCH_AVAILABLE = True
+except Exception as _e:
+    _SEARCH_AVAILABLE = False
+    _SEARCH_ERROR = str(_e)
+
+try:
+    from get_cookie import get_cookies as _selenium_get_cookies
+    _SELENIUM_AVAILABLE = True
+except Exception:
+    _SELENIUM_AVAILABLE = False
 
 load_dotenv()
 
@@ -103,6 +119,17 @@ BASE_HTML = """
     letter-spacing: -.3px;
   }
   .navbar-spacer { flex: 1; }
+  .navbar-link {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    transition: all .15s;
+  }
+  .navbar-link:hover { color: var(--text); border-color: var(--border2); background: var(--surface2); }
+  .navbar-link.active { color: var(--accent); border-color: rgba(124,106,255,.4); background: rgba(124,106,255,.08); }
 
   /* ── Layout ── */
   .container {
@@ -337,6 +364,9 @@ BASE_HTML = """
   <span class="navbar-logo">🤖</span>
   <h1>Bot Admin</h1>
   <div class="navbar-spacer"></div>
+  <a class="navbar-link" href="/">📂 Từ khóa</a>
+  <a class="navbar-link" href="/search">🔍 Test tìm kiếm</a>
+  <a class="navbar-link" href="/cookies">🍪 Cookie</a>
 </div>
 <div class="container">
   {% with msgs = get_flashed_messages(with_categories=true) %}
@@ -417,6 +447,163 @@ CATEGORY_HTML = BASE_HTML.replace("{% block content %}{% endblock %}", """
   </div>
 </div>
 """)
+
+
+SEARCH_HTML = BASE_HTML.replace("{% block content %}{% endblock %}", """
+<div class="card">
+  <div class="top-bar">
+    <div class="top-bar-title">🔍 Test tìm kiếm Pinterest</div>
+  </div>
+  <form method="get" action="{{ url_for('search_page') }}" style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+    <input type="text" name="q" value="{{ q|e }}" placeholder="Nhập từ khóa (vd: gái việt xinh)..." autofocus style="flex:1;min-width:200px">
+    <select name="rs" style="background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px;font-family:inherit">
+      {% for v,label in [('typed','typed — gõ từ từ kết quả phổ biến'),('rs','rs — related search'),('srs','srs — suggested'),('trending','trending')] %}
+      <option value="{{ v }}" {% if v == rs_mode %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="n" style="background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px;font-family:inherit">
+      {% for v in [10,20,30,50] %}
+      <option value="{{ v }}" {% if v == page_size %}selected{% endif %}>{{ v }} ảnh</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-primary" type="submit">Tìm</button>
+  </form>
+
+  {% if q %}
+  <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--muted)">
+    <b style="color:var(--text)">Debug info:</b>
+    &nbsp;query=<code style="color:var(--accent)">{{ q|e }}</code>
+    &nbsp;rs=<code style="color:var(--pink)">{{ rs_mode }}</code>
+    &nbsp;page_size=<code>{{ page_size }}</code>
+    {% if results is not none %}
+    &nbsp;→&nbsp;<b style="color:var(--success-fg)">{{ results|length }} kết quả</b>
+    &nbsp;(dọc: {{ results|selectattr('height','gt',results|map(attribute='width')|list|first if results else 0)|list|length if results else 0 }})
+    {% endif %}
+    &nbsp;&mdash;&nbsp;<a href="https://www.pinterest.com/search/pins/?q={{ q|urlencode }}&rs={{ rs_mode }}" target="_blank" style="color:var(--accent)">Mở trên Pinterest ↗</a>
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="alert alert-error">⚠️ {{ error }}</div>
+  {% elif q and results is not none %}
+  {% if results %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">
+    {% for item in results %}
+    {% set is_portrait = item.height > item.width %}
+    <div style="background:var(--surface2);border:1px solid {% if is_portrait %}rgba(124,106,255,.4){% else %}var(--border){% endif %};border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+      <a href="{{ item.url }}" target="_blank" style="display:block;aspect-ratio:{% if is_portrait %}3/4{% else %}4/3{% endif %};overflow:hidden;background:#0a0d12">
+        <img src="{{ item.url }}" alt="" loading="lazy"
+          style="width:100%;height:100%;object-fit:cover"
+          onerror="this.parentElement.style.display='none'">
+      </a>
+      <div style="padding:8px 10px;flex:1;display:flex;flex-direction:column;gap:3px">
+        {% if item.title %}
+        <div style="font-size:11.5px;font-weight:600;color:#fff;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">{{ item.title }}</div>
+        {% endif %}
+        {% if item.caption %}
+        <div style="font-size:11px;color:var(--muted);line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">{{ item.caption }}</div>
+        {% endif %}
+        <div style="font-size:10.5px;color:var(--muted);margin-top:auto;padding-top:4px;display:flex;gap:6px;align-items:center">
+          {% if item.width and item.height %}<span>{{ item.width }}×{{ item.height }}</span>{% endif %}
+          <span style="color:{% if is_portrait %}var(--accent){% else %}var(--muted){% endif %};font-weight:{% if is_portrait %}600{% else %}400{% endif %}">
+            {% if is_portrait %}✔ dọc{% else %}ngang{% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">Không tìm thấy ảnh nào cho từ khóa này.</div>
+  {% endif %}
+  {% elif not q %}
+  <div class="empty" style="padding:60px 0">
+    <div style="font-size:32px;margin-bottom:12px">🔍</div>
+    Nhập từ khóa để test kết quả<br>
+    <span style="font-size:12px;margin-top:8px;display:block">So sánh các chế độ <b>rs</b> khác nhau để tìm ra cái gần nhất với Pinterest UI</span>
+  </div>
+  {% endif %}
+</div>
+""")
+
+
+import json as _json
+import re as _re
+
+COOKIES_FILE = Path(__file__).parent / "data" / "pinterest_cookies.json"
+
+COOKIES_HTML = BASE_HTML.replace("{% block content %}{% endblock %}", """
+<div class="card">
+  <div class="top-bar">
+    <div class="top-bar-title">🔐 Đăng nhập tự động</div>
+    <a href="/cookies/status" class="btn btn-secondary btn-sm">🔍 Kiểm tra cookie</a>
+  </div>
+
+  {% if not selenium_available %}
+  <div class="alert alert-error">⚠️ Chưa cài selenium. Chạy: <code>pip install selenium</code></div>
+  {% else %}
+  <form method="post" action="/cookies/login" style="margin-bottom:16px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+      <div style="flex:1;min-width:200px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Email</label>
+        <input type="text" name="email" value="{{ email }}" placeholder="Pinterest email..." required>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Password</label>
+        <input type="text" name="password" value="{{ password }}" placeholder="Pinterest password..." required>
+      </div>
+      <button class="btn btn-primary" type="submit">🔐 Đăng nhập & Lấy cookie</button>
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="top-bar">
+    <div class="top-bar-title">🍪 Paste cURL thủ công</div>
+  </div>
+
+  <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:13px;line-height:1.7">
+    <b>Cách lấy curl:</b> Mở pinterest.com → F12 → Network → Copy as cURL → Dán bên dưới
+  </div>
+
+  <form method="post" action="/cookies/update">
+    <div style="margin-bottom:10px">
+      <textarea name="curl_cmd" rows="6" style="font-family:monospace;font-size:12px"
+        placeholder="curl 'https://www.pinterest.com/...' -b 'csrftoken=...' ..."></textarea>
+    </div>
+    <button class="btn btn-primary" type="submit">💾 Lưu cookie</button>
+  </form>
+</div>
+
+{% if current %}
+<div class="card">
+  <div class="top-bar">
+    <div class="top-bar-title">📋 Cookie hiện tại</div>
+  </div>
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:monospace;font-size:11.5px;color:var(--muted);word-break:break-all;white-space:pre-wrap;max-height:300px;overflow-y:auto">{{ current }}</div>
+</div>
+{% endif %}
+""")
+
+
+def _parse_curl_cookies(curl_cmd: str) -> dict:
+    """Parse chuỗi -b '...' từ lệnh curl thành dict."""
+    # Tìm -b '...' hoặc --cookie '...'
+    m = _re.search(r"""(?:-b|--cookie)\s+['"](.*?)['"](?=\s+-|\s*$|\s*\\)""", curl_cmd, _re.DOTALL)
+    if not m:
+        # Thử không có quote
+        m = _re.search(r"""(?:-b|--cookie)\s+(\S+)""", curl_cmd)
+    if not m:
+        return {}
+    cookie_str = m.group(1).strip()
+    cookies = {}
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            cookies[k.strip()] = v.strip()
+    return cookies
 
 
 # ============ ROUTES ============
@@ -503,6 +690,129 @@ def delete_keyword(name: str):
         conn.commit()
     flash(f"Đã xóa '{kw}'.", "success")
     return redirect(url_for("category", name=name))
+
+
+@app.route("/search")
+def search_page():
+    q = request.args.get("q", "").strip()
+    rs_mode = request.args.get("rs", "typed")
+    if rs_mode not in ("typed", "rs", "srs", "trending"):
+        rs_mode = "typed"
+    try:
+        page_size = int(request.args.get("n", 20))
+    except ValueError:
+        page_size = 20
+    page_size = max(1, min(page_size, 50))
+
+    results = None
+    error = None
+    if q:
+        if not _SEARCH_AVAILABLE:
+            error = f"Không thể import bot.py: {_SEARCH_ERROR}"
+        else:
+            try:
+                results = _search_with_meta(q, page_size, rs=rs_mode)
+            except Exception as e:
+                error = str(e)
+    return render_template_string(SEARCH_HTML, q=q, results=results, error=error,
+                                  page_size=page_size, rs_mode=rs_mode)
+
+
+@app.route("/cookies")
+def cookies_page():
+    current = None
+    if COOKIES_FILE.exists():
+        try:
+            current = COOKIES_FILE.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    return render_template_string(
+        COOKIES_HTML,
+        current=current,
+        selenium_available=_SELENIUM_AVAILABLE,
+        email=os.getenv("PINTEREST_EMAIL", ""),
+        password=os.getenv("PINTEREST_PASSWORD", ""),
+    )
+
+
+@app.route("/cookies/login", methods=["POST"])
+def cookies_login():
+    if not _SELENIUM_AVAILABLE:
+        flash("Chưa cài selenium.", "error")
+        return redirect(url_for("cookies_page"))
+
+    email = request.form.get("email", "").strip()
+    password = request.form.get("password", "").strip()
+    if not email or not password:
+        flash("Cần nhập email và password.", "error")
+        return redirect(url_for("cookies_page"))
+
+    try:
+        cookie_dict = _selenium_get_cookies(email, password)
+    except Exception as e:
+        flash(f"❌ Đăng nhập thất bại: {e}", "error")
+        return redirect(url_for("cookies_page"))
+
+    COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    COOKIES_FILE.write_text(_json.dumps(cookie_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if _SEARCH_AVAILABLE:
+        try:
+            apply_pinterest_cookies()
+            flash(f"✅ Đăng nhập thành công! Đã lưu & reload {len(cookie_dict)} cookies.", "success")
+        except Exception:
+            flash(f"✅ Đã lưu {len(cookie_dict)} cookies. Restart bot để áp dụng.", "success")
+    else:
+        flash(f"✅ Đã lưu {len(cookie_dict)} cookies.", "success")
+    return redirect(url_for("cookies_page"))
+
+
+@app.route("/cookies/update", methods=["POST"])
+def cookies_update():
+    curl_cmd = request.form.get("curl_cmd", "")
+    if not curl_cmd.strip():
+        flash("Vui lòng paste lệnh curl.", "error")
+        return redirect(url_for("cookies_page"))
+
+    cookies = _parse_curl_cookies(curl_cmd)
+    if not cookies:
+        flash("⚠️ Không phân tích được cookie từ curl. Kiểm tra lại.", "error")
+        return redirect(url_for("cookies_page"))
+
+    # Kiểm tra có _auth=1 không (cookie chưa đăng nhập thì vô dụng)
+    if cookies.get("_auth") != "1":
+        flash("⚠️ Cookie không có _auth=1 — cần đăng nhập Pinterest trước.", "error")
+        return redirect(url_for("cookies_page"))
+
+    COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    COOKIES_FILE.write_text(_json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Reload bot session nếu import được
+    if _SEARCH_AVAILABLE:
+        try:
+            apply_pinterest_cookies()
+            flash(f"✅ Đã lưu và reload {len(cookies)} cookie vào bot ngay lập tức.", "success")
+        except Exception as e:
+            flash(f"✅ Đã lưu {len(cookies)} cookie. Bot sẽ dùng khi khởi động lại. ({e})", "success")
+    else:
+        flash(f"✅ Đã lưu {len(cookies)} cookie vào file.", "success")
+    return redirect(url_for("cookies_page"))
+
+
+@app.route("/cookies/status")
+def cookies_status():
+    if not _SEARCH_AVAILABLE:
+        flash(f"Không thể import bot.py: {_SEARCH_ERROR}", "error")
+        return redirect(url_for("cookies_page"))
+    try:
+        results = _search_with_meta("girl", 1)
+        if results:
+            flash("✅ Cookie hợp lệ! API Pinterest trả về kết quả.", "success")
+        else:
+            flash("⚠️ Cookie có vẻ hết hạn — API trả về 0 kết quả.", "error")
+    except Exception as e:
+        flash(f"❌ Lỗi kiểm tra: {e}", "error")
+    return redirect(url_for("cookies_page"))
 
 
 # ============ MAIN ============

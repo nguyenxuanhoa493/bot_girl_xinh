@@ -5,3 +5,4 @@ pinscrape==5.1.0
 opencv-python-headless
 numpy
 flask>=3.0.0
+selenium>=4.20.0

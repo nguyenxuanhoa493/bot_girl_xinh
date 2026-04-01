@@ -176,6 +176,47 @@ FACE_CHECK_LIMIT = 6
 
 pinterest = Pinterest()
 
+# ── Cookie management: load từ file, fallback về hardcode ──
+_COOKIES_FILE = Path(__file__).parent / "data" / "pinterest_cookies.json"
+
+_FALLBACK_COOKIES = {
+    "csrftoken":          "1c404f7351edff46c90be26b71b4e76e",
+    "_routing_id":        '"dadc71a3-3eca-46d9-bf2b-54de877bcd73"',
+    "_auth":              "1",
+    "_pinterest_sess":    "TWc9PSZOUzl6Zm56Z294WSt6Q01XRmMrM3RtYythZWo2aU9MTDAxSGpnalFUYjBoRVcwR1RxQnc0UHFDSVNsdzQ5TVpDcXZlNFlqTWUzRFBTZU5JYTN1WFRtc2VDTG9zMERicDd4ZVBycDdhdzBPQVIycHV2VnpFai9nMXNlV051REVqWjlNSi9Kd1FlR1JpN1N4cjdjTVpOdGUwM056cFgxcFhBVXl2Q1grVVlMWHJEWlNzbG1CNm1jb1VTNkE1MGt0UStJYjRwNSs3TldrTXNrUU5WZ2NiM2tzRmtna3VmTUlYOFkxTmNOancrejZsMzBYSnM1K2pXcjROQ2xtajlHaDc2VkJkRUZZVng5VURhVER2K0hBMVk3eVlDeE5pdlpVSE5sU1hoUU4yMXRLejBKMStKTm04eXJCanRubFRySFR1b3BJM0c1eTFhTWFUL2dCcGhKMHJqMm10RGdMOHgyajR1aGFFSFBuWlZLUTJKQjlPVy9GRHZHU0dKYldLQjhNaHhHeTlseUt0T1RWMm4wYUluZk9MY0lIT0JURkh0WVpPNmhZdnduNFI1UEJXak1UZitiSHNGYWFpUGwzajVQaW9XYnpoNXA0YWdnREVjbzRlN3k3eXRES2pkUDM0OU9qeUV6eEtjNERjUW4ra2JYZTN6SWxRL0trbERPY2dJK045N01QYUtieG84SDRTM3FEMU8vTzZvMVQycmFTdnV6U3YvWjJ0bWlvVklvbE1WSCt1WVBEMnZPbGUxUHhvVHN2aUhnWWplcFdxVGhMay9MY0diakdvNzJPeE9jaDFxZnY4bGxibjV3aE5YeVZaUEl5VVJYTXlEZUpFNEN2UDJqWE9LY09wV00wQXlSNzY5blBnZ2JjNHJEUFhQMkJKNjNkY01ER0hMZlRoKzlkdm55WFc0NDMrMnd1N0EvdjlVZFVTUlBleHRyaGREQnNYMWM5U0hRVU1sL053L1RJczBZa0dFVXluODMwcGVUb0hGazVtZ3BaN2dUdkkwNHQ1V0wvdktPUncrcUt6bTVIRjZFaHVqemJQRE5vb0RBRDZRTHBLNHFqMDJDNUxrSVJqZnZEWnZjSVNwMDFPZG1rZlFlSnV6YSsvL2I0azNWeHp1WmxHbTZYbVQrdFBpYnpMQjlzellvQmNHTEtSWDl6Umx3R2tOSVUvOGo5Wkx6cjI0RGhxcFhhakV1UUhzbGYrdWNTcEdmSTRkczhDR0NrVjlqd2xBQUpwNDBvNzJIYUhIZE5hbm5oa09IM0xuMUU0L0xieWV3NVRHUVNmdjZqdVloZ3dnNzR2WHdBT0M4VjRkYS9kR3VvQitLOUdJNmhHYmpTRi9zVU5iMDRyRjN0NTBaMHB2aWY0OFVSb2FoTHcxc3lsako4U2ZxOXFQeUhVNHRNOENRZHN0NzVwT3BUcFZtd3ozeDI2bjA0VldnOVFPUUh5YWdQWm1hdGdGcFFEU2pXMVZGV3lCblpUSTJVOUY1VTB6MFFma3VaWkpLZmVhU1g1a1NNZ1RaMDM0cGdSTlhBLyt5NWZ6Q0lOaXdVaVlKV255d2YxaXBway8xeE1ndUgxMm9IZzNzTzhhL2h3bjJDK2VhcUFQR0gwbUx3LzZzMFBmWENkMUM0MCsrRlV4NzNCdUt0YnpGbnJ5Z2R6a2UvcU9IdnNiVk8rTlJhUTBmL3o0WVdpT0pKM0F6R2V0MXNoNENzTGJtMTNJZWF3NXFTc1pqdEg5V3JMc2ttbUI5N2hONzZwNmpQSklCbk0rOUthdHlxcHlGNE45bVBPcXdPWjUmVDc2TVJsMG8rTzlzV3ZNZzdVdjUzMEVkM0wwPQ==",
+    "__Secure-s_a":       "RHd3MGl0U3ZZZFZXVVluZDA5SWhEaXpPbzNERjZ1MlhwYlNqT2k1S3RHckovOHhTRENDcTVxaktxQTNTcEVvMVUxck9RaFhINUdwUkcrK0tWVW81OFRaRnlCK29QRHFaajBLeHBId2VOZkwralpJQ0IxY0w0VEZTYkc3RlVaTnljcUFLcUhYRHVSV24wNjVIR2JDTk9yRUNSeDV3ZENUbUN1dHk4ajF4TGZrU2lhK05UWGdLRkhGSzRBalRDTWVyNGJpb1FyRHh5d0xMK0pRQ0QvMUdhRFVud0lTbGpnTkxVTkY1M2NNeDRsVkRHbmlDUFhiWUduYUo1dG9KQjBZcE1VMjdaUHFCU1pDSnBrTDRzd1A5NGlhaTF1WC9NWkRyZU5kRGZDUlBjWDFLanFuV2lZNWJTZVpvaWYrcUVKU2RLUDQ3QnJXY2F6bXV1V1diNGZKQWxoRGg2Rm1tbG1nNDV4aHBaRHVEU2JabEQ1a0V6WmdoTXU1bm0wVXgxd3lDamdlSXBkdUczN0tHbG5Bc21hSFVIeW9ncDlrb3UyZloxR1hQSldKUUxTQ0RKU1JhRjc2N1R0a0NsN29KclNocDExcFNWc0FJazJrc3dFOUFhWERLL05PWklEQ3pyOEFLMDhjd0x4SkJhdWQweThtRnI3ZzV0V1o1cWRWZGdQZXRYYXEzdmdoVyt5TEMyV2tyZ0tZWjFRS05FemJPdlh2WkY5cUg1VlpCYjZTb0N5bDZqTzBReHdiRmpPZHRIQTZ1dVRieHNYenVSSzFObWtQVGVvNzRZcHhUY3B5SXBlMFF4eVlaQ09FWFJ5NC90TkZrdHJrMWVFbWJKS2c2Y2dmNVJDZ2V2YUVnR2hneUt1bFZpN3VoaDE5TzlDQUw5aU56OHQ5THJhZGdxN2hncTZGYTg0SEhBeXJNMUF3dVZTUGg3SFRTbmRRT2xGTHpBVVVBVFZGOEdzbjJiaGxNb3pRUWJWNGUrR2FTVkJ3cytxd1RzR0tWSkNsamdJb0tBWGpVZUV2L1dwSjBKaWhFeVVNK3k5MWpabkRSMXIvYnlidmd0aWR1bHpRclo3NUEzRnpBc0RxeS9IN3lTTmhUaW5pZU9ZV3MraVZsaUcxc05GMFlHbGNEV0ZSUzBmYUQySlV2UWx6WVQ4TFdHQ3ZTai9ZZmw5UU9Nc3I3VHhkcG1Jcmd4Q1o4VFB0QktMZFZva1JFS2tFVnM2Y2M4bTlkNGdyYTlwZDI5MHYvVEYxOFRvZEI4TDB1WTB0SjZmYU5wNkdaK1pHb3ZIdnUyK1dIRzB0OTJqVnBSclpiY0QzWitDSkNRdzJ0WmtDRm82cz0mK0p1TTNSajlRc1JVamtLMHJQT2JOSjg0UHNVPQ==",
+    "_b":                 '"AZKZo5PpspRJnpkkV+A2b7hFxEmnIJgUOcluyUf0n2blrCuL8D4EzgCOv/FJ4nnbTGE="',
+    "sessionFunnelEventLogged": "1",
+}
+
+
+def _load_cookies_from_file() -> dict:
+    try:
+        if _COOKIES_FILE.exists():
+            import json as _j
+            data = _j.loads(_COOKIES_FILE.read_text())
+            if data:
+                return data
+    except Exception:
+        pass
+    return _FALLBACK_COOKIES
+
+
+def apply_pinterest_cookies() -> None:
+    """Đọc cookie từ file (hoặc fallback) và inject vào session."""
+    cookies = _load_cookies_from_file()
+    pinterest.session.cookies.clear()
+    pinterest.session.cookies.update(cookies)
+    csrf = cookies.get("csrftoken", "")
+    pinterest.session.headers.update({
+        "x-csrftoken": csrf,
+        "x-app-version": "b85ab6b",
+    })
+    logger.info(f"[Cookie] Đã load cookie, csrftoken={csrf[:8]}...")
+
+
+apply_pinterest_cookies()
+
 # Load các Haar cascade một lần tại module level
 _cascade_frontal = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 _cascade_profile = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
@@ -220,9 +261,29 @@ def has_person(url: str, timeout: int = 8) -> bool:
         return False
 
 
-def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
+def _auto_refresh_cookies() -> bool:
+    """Tự động đăng nhập lại Pinterest lấy cookie mới. Trả về True nếu thành công."""
+    email = os.getenv("PINTEREST_EMAIL", "")
+    password = os.getenv("PINTEREST_PASSWORD", "")
+    if not email or not password:
+        logger.error("[Cookie] Thiếu PINTEREST_EMAIL/PINTEREST_PASSWORD trong .env")
+        return False
+    try:
+        from get_cookie import get_cookies
+        cookie_dict = get_cookies(email, password)
+        _COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _COOKIES_FILE.write_text(json.dumps(cookie_dict, indent=2, ensure_ascii=False))
+        apply_pinterest_cookies()
+        logger.info("[Cookie] ✅ Đã tự động refresh cookie thành công")
+        return True
+    except Exception as e:
+        logger.error(f"[Cookie] ❌ Auto refresh thất bại: {e}")
+        return False
+
+
+def _search_with_meta(query: str, page_size: int = 20, rs: str = "typed") -> list[dict]:
     """Gọi thẳng Pinterest API, trả về list dict {url, title, caption}."""
-    source_url = f"/search/pins/?q={quote(query)}&rs=typed"
+    source_url = f"/search/pins/?q={quote(query)}&rs={rs}"
     pinterest.session.get(f"{pinterest.BASE_URL}{source_url}", headers=pinterest.BASE_HEADERS)
 
     import json as _json
@@ -231,19 +292,16 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
             "applied_unified_filters": None, "appliedProductFilters": "---",
             "article": None, "auto_correction_disabled": False, "corpus": None,
             "customized_rerank_type": None, "domains": None, "filters": None,
-            "journey_depth": None, "page_size": str(page_size), "price_max": None,
-            "price_min": None, "query_pin_sigs": None, "query": quote(query),
-            "redux_normalize_feed": True, "request_params": None, "rs": "typed",
+            "journey_depth": None, "page_size": page_size, "price_max": None,
+            "price_min": None, "query_pin_sigs": None, "query": query,
+            "redux_normalize_feed": True, "request_params": None, "rs": rs,
             "scope": "pins", "selected_one_bar_modules": None, "source_id": None,
             "source_module_id": None, "seoDrawerEnabled": False,
-            "source_url": quote_plus(source_url), "top_pin_id": None, "top_pin_ids": None,
+            "source_url": source_url, "top_pin_id": None, "top_pin_ids": None,
         },
         "context": {},
     }
-    encoded = quote_plus(_json.dumps(payload).replace(" ", ""))
-    encoded = (encoded.replace("%2520", "%20").replace("%252F", "%2F")
-               .replace("%253F", "%3F").replace("%252520", "%2520")
-               .replace("%253D", "%3D").replace("%2526", "%26"))
+    encoded = quote_plus(_json.dumps(payload, separators=(",", ":")))
 
     url = (
         f"{pinterest.BASE_URL}/resource/BaseSearchResource/get/"
@@ -267,7 +325,15 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
     })
 
     resp = pinterest.session.get(url, headers=headers, proxies=pinterest.proxies)
+    if resp.status_code in (401, 403):
+        logger.warning(f"[Cookie] ⚠️ Cookie hết hạn (HTTP {resp.status_code}) — đang tự động lấy lại...")
+        if _auto_refresh_cookies():
+            resp = pinterest.session.get(url, headers=headers, proxies=pinterest.proxies)
+        if resp.status_code in (401, 403):
+            logger.error("[Cookie] ❌ Refresh cookie thất bại")
+            return []
     if resp.status_code != 200:
+        logger.warning(f"[Cookie] HTTP {resp.status_code}")
         return []
 
     raw_results = resp.json().get("resource_response", {}).get("data", {}).get("results", [])
