@@ -548,13 +548,13 @@ def _build_keyword_menu(category: str) -> InlineKeyboardMarkup:
 
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Bạn không có quyền dùng lệnh này.")
-        return
     await update.message.reply_text(
-        "🔧 <b>Quản lý từ khóa Pinterest</b>\nChọn category:",
-        reply_markup=_build_category_menu(),
+        "💋 <b>Khu vực riêng của sếp đây ạ~</b>\n\n"
+        "🔐 Em đã chuẩn bị sẵn bảng điều khiển cho sếp rồi, sếp vào đây nha:\n\n"
+        "👉 <a href=\"http://100.112.48.26:8080/\">http://100.112.48.26:8080/</a>\n\n"
+        "<i>Sếp muốn thêm danh mục hay từ khóa gì, em phục vụ tận nơi ạ~ 😘</i>",
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
