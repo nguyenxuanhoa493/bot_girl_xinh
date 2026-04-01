@@ -251,6 +251,7 @@ def _search_with_meta(query: str, page_size: int = 20) -> list[dict]:
     )
     headers = pinterest.BASE_HEADERS.copy()
     headers["X-Pinterest-Source-Url"] = source_url
+    headers["Accept-Language"] = "vi,en-US;q=0.9,en;q=0.8"
 
     resp = pinterest.session.get(url, headers=headers, proxies=pinterest.proxies)
     if resp.status_code != 200:
@@ -447,18 +448,31 @@ async def s_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = await update.message.reply_text(f"🔍 Đang tìm '{keyword}'...")
 
     try:
-        urls = pinterest.search(keyword, FETCH_COUNT)
-        logger.debug(f"[Search] '{keyword}' -> {len(urls)} ảnh")
-        if not urls:
+        items = _search_with_meta(keyword, FETCH_COUNT)
+        logger.debug(f"[Search] '{keyword}' -> {len(items)} ảnh")
+        if not items:
             await msg.edit_text(f"❌ Không tìm thấy ảnh cho '{keyword}', thử từ khóa khác!")
             return
 
-        chosen = str(random.choice(urls[:3]))
-        chosen = chosen.replace("/236x/", "/originals/")
-        logger.info(f"[Search] Gửi ảnh cho @{user.username}: {chosen}")
+        # Thử person detection trên top 3, fallback về top 1 nếu không có
+        chosen_item = None
+        for item in items[:3]:
+            url_candidate = item["url"].replace("/236x/", "/originals/")
+            if has_person(url_candidate):
+                chosen_item = {**item, "url": url_candidate}
+                break
+        if not chosen_item:
+            chosen_item = {**items[0], "url": items[0]["url"].replace("/236x/", "/originals/")}
+
+        logger.info(f"[Search] Gửi ảnh cho @{user.username}: {chosen_item['url']}")
+        parts = [f"🔍 Kết quả cho: <b>{keyword}</b>"]
+        if chosen_item.get("title"):
+            parts.append(f"<b>{chosen_item['title']}</b>")
+        if chosen_item.get("caption"):
+            parts.append(chosen_item["caption"])
         await update.message.reply_photo(
-            photo=chosen,
-            caption=f"🔍 Kết quả cho: <b>{keyword}</b>",
+            photo=chosen_item["url"],
+            caption="\n".join(parts),
             parse_mode="HTML",
         )
         await msg.delete()
