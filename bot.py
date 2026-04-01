@@ -175,6 +175,7 @@ FETCH_COUNT = 20
 FACE_CHECK_LIMIT = 6
 
 pinterest = Pinterest()
+_pinscrape_fallback = Pinterest()  # instance riêng cho fallback, không inject cookie
 
 # ── Cookie management: load từ file, fallback về hardcode ──
 _COOKIES_FILE = Path(__file__).parent / "data" / "pinterest_cookies.json"
@@ -343,7 +344,7 @@ def _search_with_meta(query: str, page_size: int = 20, rs: str = "typed") -> lis
     if not items:
         logger.info(f"[Pinterest] API chính trả 0 kết quả, fallback pinscrape cho '{query}'")
         try:
-            urls = pinterest.search(query, page_size)
+            urls = _pinscrape_fallback.search(query, page_size)
             items = [{"url": u, "title": "", "caption": "", "width": 0, "height": 0} for u in urls]
         except Exception as e:
             logger.warning(f"[Pinterest] Fallback pinscrape cũng lỗi: {e}")
