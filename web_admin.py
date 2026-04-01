@@ -266,6 +266,26 @@ BASE_HTML = """
   }
   input[type=text]::placeholder { color: var(--muted); }
 
+  textarea {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    padding: 9px 14px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-family: inherit;
+    width: 100%;
+    resize: vertical;
+    min-height: 80px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(124,106,255,.15);
+  }
+  textarea::placeholder { color: var(--muted); }
+
   /* ── Form row ── */
   .add-bar {
     background: var(--surface2);
@@ -366,9 +386,11 @@ CATEGORY_HTML = BASE_HTML.replace("{% block content %}{% endblock %}", """
       <button class="btn btn-danger btn-sm" type="submit">🗑 Xóa danh mục</button>
     </form>
   </div>
-  <form method="post" action="{{ url_for('add_keyword', name=name) }}" class="form-row" style="margin-bottom:20px">
-    <input type="text" name="keyword" placeholder="Nhập từ khóa mới..." required>
-    <button class="btn btn-primary" type="submit">+ Thêm</button>
+  <form method="post" action="{{ url_for('add_keyword', name=name) }}" style="margin-bottom:20px">
+    <textarea name="keywords" placeholder="Nhập từ khóa (mỗi dòng một từ, hoặc cách nhau bằng dấu phẩy)..."></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" type="submit">+ Thêm</button>
+    </div>
   </form>
   <div class="table-wrap">
   <table>
@@ -443,19 +465,31 @@ def delete_category(name: str):
 
 @app.route("/category/<name>/keyword/add", methods=["POST"])
 def add_keyword(name: str):
-    kw = request.form.get("keyword", "").strip()
-    if not kw:
+    raw = request.form.get("keywords", "").strip()
+    if not raw:
         flash("Từ khóa không được để trống.", "error")
         return redirect(url_for("category", name=name))
+    import re
+    parts = re.split(r"[,\n]+", raw)
+    kws = [p.strip() for p in parts if p.strip()]
+    if not kws:
+        flash("Từ khóa không được để trống.", "error")
+        return redirect(url_for("category", name=name))
+    added, skipped = 0, 0
     with get_db() as conn:
-        try:
-            conn.execute(
-                "INSERT INTO keywords (category, keyword) VALUES (?, ?)", (name, kw)
-            )
-            conn.commit()
-            flash(f"Đã thêm '{kw}'.", "success")
-        except sqlite3.IntegrityError:
-            flash(f"Từ khóa '{kw}' đã tồn tại.", "error")
+        for kw in kws:
+            try:
+                conn.execute(
+                    "INSERT INTO keywords (category, keyword) VALUES (?, ?)", (name, kw)
+                )
+                added += 1
+            except sqlite3.IntegrityError:
+                skipped += 1
+        conn.commit()
+    if added:
+        flash(f"Đã thêm {added} từ khóa." + (f" ({skipped} bị bỏ qua do trùng)" if skipped else ""), "success")
+    else:
+        flash(f"Tất cả {skipped} từ khóa đã tồn tại.", "error")
     return redirect(url_for("category", name=name))
 
 
