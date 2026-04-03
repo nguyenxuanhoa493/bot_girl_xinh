@@ -913,6 +913,17 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         text = "chào em"
 
+    # Detect câu hỏi muốn xem ảnh → tự động chạy random
+    _IMG_TRIGGERS = [
+        "ảnh", "hình", "pic", "photo", "gái", "girl", "gửi ảnh", "cho xem",
+        "có ảnh", "có hình", "coi ảnh", "xem ảnh", "show ảnh",
+    ]
+    text_lower = text.lower()
+    if any(kw in text_lower for kw in _IMG_TRIGGERS):
+        logger.info(f"[AI] Detect yêu cầu ảnh từ @{user.username}, tự chạy random")
+        await random_all(update, context)
+        return
+
     logger.info(f"[AI] @{user.username}({user.id}) hỏi: {text[:80]}")
 
     # Hiện typing indicator
