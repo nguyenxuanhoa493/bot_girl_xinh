@@ -1124,14 +1124,10 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 r = requests.get(image_url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
                 r.raise_for_status()
                 import io
-                ext = image_url.split("?")[0].rsplit(".", 1)[-1].lower()
-                if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
-                    ext = "jpg"
-                filename = f"{title[:40].strip() or 'image'}.{ext}"
                 bio = io.BytesIO(r.content)
-                bio.name = filename
-                await msg.reply_document(
-                    document=bio,
+                bio.name = "image.jpg"
+                await msg.reply_photo(
+                    photo=bio,
                     caption=caption,
                     parse_mode="HTML",
                 )
