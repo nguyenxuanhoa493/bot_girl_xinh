@@ -912,8 +912,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if bot_username:
         text = text.replace(f"@{bot_username}", "").strip()
 
+    # Nếu chỉ @mention mà không kèm nội dung thì chào hỏi
     if not text:
-        return
+        text = "chào em"
 
     logger.info(f"[AI] @{user.username}({user.id}) hỏi: {text[:80]}")
 
