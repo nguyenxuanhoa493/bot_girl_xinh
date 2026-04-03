@@ -1137,9 +1137,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply = chat_with_ai(msg.chat_id, enriched_text, username)
         if reply:
             await msg.reply_text(reply)
-        # Gửi thêm video nếu có (tải về máy rồi send)
+        # Gửi thêm video đầu tiên nếu có
         videos = _serper_videos(text, num=3)
-        for v in videos:
+        for v in videos[:1]:
             title = v.get("title", "")
             link = v.get("link", "")
             if not link:
