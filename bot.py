@@ -885,8 +885,16 @@ def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     if not msg or not msg.text:
         return False
 
-    # Reply tất cả tin nhắn (private lẫn group)
-    return True
+    # Chỉ reply trong nhóm được phép hoặc private chat
+    ALLOWED_GROUP_IDS = {-1002691164736}
+    chat_id = msg.chat_id
+    chat_type = msg.chat.type
+
+    if chat_type == "private":
+        return True
+    if chat_id in ALLOWED_GROUP_IDS:
+        return True
+    return False
 
 
 async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
