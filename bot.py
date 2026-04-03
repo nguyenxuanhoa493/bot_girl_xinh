@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # ============ CONFIG AI CHAT ============
 
 AI_BASE_URL = os.getenv("AI_BASE_URL", "http://localhost:20128/v1")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 AI_MODEL: Optional[str] = None  # lazy load khi khởi động
 AI_HISTORY_MAX = 20  # số lượt hội thoại giữ lại per chat
 
@@ -122,6 +123,60 @@ def chat_with_ai(chat_id: int, user_message: str, username: str = "") -> Optiona
         if history and history[-1]["role"] == "user":
             history.pop()
         return None
+
+# ============ WEB SEARCH (SERPER) ============
+
+_SEARCH_TRIGGERS = [
+    "tìm kiếm", "tìm giúp", "search", "google", "tin tức", "tin mới",
+    "có gì mới", "mới nhất", "hôm nay", "hôm qua", "gần đây", "latest",
+    "thời sự", "news", "xu hướng", "trending", "bao nhiêu", "giá", "kết quả",
+    "wiki", "wikipedia", "là gì", "là ai", "ở đâu", "khi nào",
+]
+
+
+def _is_search_query(text: str) -> bool:
+    t = text.lower()
+    return any(kw in t for kw in _SEARCH_TRIGGERS)
+
+
+def _serper_search(query: str, num: int = 5) -> Optional[str]:
+    """Gọi Serper.dev API, trả về chuỗi kết quả tóm tắt để đưa vào context AI."""
+    if not SERPER_API_KEY:
+        logger.warning("[Serper] SERPER_API_KEY chưa được cấu hình")
+        return None
+    try:
+        resp = requests.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+            json={"q": query, "num": num, "gl": "vn", "hl": "vi"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        parts = []
+
+        # Answer box
+        if ab := data.get("answerBox"):
+            if answer := ab.get("answer") or ab.get("snippet"):
+                parts.append(f"Trả lời nhanh: {answer}")
+
+        # Organic results
+        for r in data.get("organic", [])[:num]:
+            title = r.get("title", "")
+            snippet = r.get("snippet", "")
+            link = r.get("link", "")
+            parts.append(f"- {title}: {snippet} ({link})")
+
+        if not parts:
+            return None
+
+        logger.info(f"[Serper] '{query}' → {len(parts)} kết quả")
+        return "\n".join(parts)
+    except Exception as e:
+        logger.warning(f"[Serper] Lỗi: {e}")
+        return None
+
 
 # ============ TỪ KHÓA PINTEREST THEO THỂ LOẠI ============
 
@@ -960,7 +1015,19 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Hiện typing indicator
     await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
 
-    reply = chat_with_ai(msg.chat_id, text, username)
+    # Nếu là câu hỏi tìm kiếm/tin tức → bổ sung kết quả web vào context
+    enriched_text = text
+    if _is_search_query(text):
+        logger.info(f"[Serper] Detect search query, tìm web: {text[:60]}")
+        search_results = _serper_search(text)
+        if search_results:
+            enriched_text = (
+                f"{text}\n\n"
+                f"[Kết quả tìm kiếm web]:\n{search_results}\n"
+                f"Hãy tóm tắt và trả lời dựa trên kết quả trên."
+            )
+
+    reply = chat_with_ai(msg.chat_id, enriched_text, username)
     if reply:
         await msg.reply_text(reply)
     else:
