@@ -885,21 +885,8 @@ def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     if not msg or not msg.text:
         return False
 
-    chat_type = msg.chat.type  # "private", "group", "supergroup", "channel"
-
-    # Luôn reply trong private chat
-    if chat_type == "private":
-        return True
-
-    # Trong group: reply khi được mention hoặc reply vào tin nhắn của bot
-    bot_username = context.bot.username
-    if bot_username and f"@{bot_username}" in msg.text:
-        return True
-    if msg.reply_to_message and msg.reply_to_message.from_user:
-        if msg.reply_to_message.from_user.id == context.bot.id:
-            return True
-
-    return False
+    # Reply tất cả tin nhắn (private lẫn group)
+    return True
 
 
 async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
