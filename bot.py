@@ -140,7 +140,7 @@ def _is_search_query(text: str) -> bool:
 
 
 def _serper_search(query: str, num: int = 5) -> Optional[str]:
-    """Gọi Serper.dev API, trả về chuỗi kết quả tóm tắt để đưa vào context AI."""
+    """Gọi Serper.dev /search, trả về chuỗi tóm tắt để đưa vào context AI."""
     if not SERPER_API_KEY:
         logger.warning("[Serper] SERPER_API_KEY chưa được cấu hình")
         return None
@@ -176,6 +176,46 @@ def _serper_search(query: str, num: int = 5) -> Optional[str]:
     except Exception as e:
         logger.warning(f"[Serper] Lỗi: {e}")
         return None
+
+
+def _serper_images(query: str, num: int = 5) -> list[dict]:
+    """Gọi Serper.dev /images, trả về list {title, imageUrl, link}."""
+    if not SERPER_API_KEY:
+        return []
+    try:
+        resp = requests.post(
+            "https://google.serper.dev/images",
+            headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+            json={"q": query, "num": num, "gl": "vn", "hl": "vi"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("images", [])
+        logger.info(f"[Serper/images] '{query}' → {len(results)} ảnh")
+        return results[:num]
+    except Exception as e:
+        logger.warning(f"[Serper/images] Lỗi: {e}")
+        return []
+
+
+def _serper_videos(query: str, num: int = 3) -> list[dict]:
+    """Gọi Serper.dev /videos, trả về list {title, link, snippet, imageUrl}."""
+    if not SERPER_API_KEY:
+        return []
+    try:
+        resp = requests.post(
+            "https://google.serper.dev/videos",
+            headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+            json={"q": query, "num": num, "gl": "vn", "hl": "vi"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("videos", [])
+        logger.info(f"[Serper/videos] '{query}' → {len(results)} video")
+        return results[:num]
+    except Exception as e:
+        logger.warning(f"[Serper/videos] Lỗi: {e}")
+        return []
 
 
 # ============ TỪ KHÓA PINTEREST THEO THỂ LOẠI ============
@@ -975,6 +1015,46 @@ def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     return False
 
 
+def _classify_intent(text: str) -> str:
+    """Dùng AI classify intent: 'search' | 'image' | 'chat'. Fallback về 'chat' nếu lỗi."""
+    model = _get_ai_model()
+    if not model:
+        return "chat"
+    try:
+        resp = requests.post(
+            f"{AI_BASE_URL}/chat/completions",
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Classify the user's message intent. "
+                            "Reply with ONLY one word:\n"
+                            "- 'search' if they want to search the web, find news, look up information, ask about current events or facts\n"
+                            "- 'image' if they want to see photos, pictures, girls, or any visual content\n"
+                            "- 'chat' for anything else"
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                "stream": False,
+                "max_tokens": 5,
+                "temperature": 0,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        intent = resp.json()["choices"][0]["message"]["content"].strip().lower()
+        if intent not in ("search", "image", "chat"):
+            intent = "chat"
+        logger.info(f"[Intent] '{text[:60]}' → {intent}")
+        return intent
+    except Exception as e:
+        logger.warning(f"[Intent] Lỗi classify: {e}, fallback 'chat'")
+        return "chat"
+
+
 async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Xử lý tin nhắn bằng AI khi phù hợp."""
     if not _should_ai_reply(update, context):
@@ -994,50 +1074,87 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         text = "chào em"
 
-    # Detect câu hỏi muốn xem ảnh → random 1 trong các hành động
-    _IMG_TRIGGERS = [
-        "ảnh", "hình", "pic", "photo", "gái", "girl", "gửi ảnh", "cho xem",
-        "có ảnh", "có hình", "coi ảnh", "xem ảnh", "show ảnh",
-    ]
-    text_lower = text.lower()
-    if any(kw in text_lower for kw in _IMG_TRIGGERS):
-        _img_actions = ["random_all"]
-        chosen = random.choice(_img_actions)
-        logger.info(f"[AI] Detect yêu cầu ảnh từ @{user.username}, chọn: {chosen}")
-        if chosen == "random_all":
-            await random_all(update, context)
-        else:
-            await context.bot.send_message(chat_id=msg.chat_id, text=chosen)
-        return
-
     logger.info(f"[AI] @{user.username}({user.id}) hỏi: {text[:80]}")
-
-    # Hiện typing indicator
     await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
 
-    # Nếu là câu hỏi tìm kiếm/tin tức → bổ sung kết quả web vào context
-    enriched_text = text
-    if _is_search_query(text):
-        logger.info(f"[Serper] Detect search query, tìm web: {text[:60]}")
+    # Dùng AI classify intent
+    intent = _classify_intent(text)
+
+    if intent == "search":
         search_results = _serper_search(text)
+        enriched_text = text
         if search_results:
             enriched_text = (
                 f"{text}\n\n"
                 f"[Kết quả tìm kiếm web]:\n{search_results}\n"
                 f"Hãy tóm tắt và trả lời dựa trên kết quả trên."
             )
+        reply = chat_with_ai(msg.chat_id, enriched_text, username)
+        if reply:
+            await msg.reply_text(reply)
+        # Gửi thêm video nếu có
+        videos = _serper_videos(text, num=3)
+        for v in videos:
+            title = v.get("title", "")
+            link = v.get("link", "")
+            if link:
+                await msg.reply_text(f"🎬 <b>{title}</b>\n{link}", parse_mode="HTML")
+        if not reply:
+            fallbacks = [
+                "Ủa AI của em đang ngủ rồi sếp ơi 😴 Thử lại sau nha~",
+                "Vcl server lag quá sếp ơi, em chịu 😭 Hỏi lại đi ạ!",
+                "Em hỏng hiểu sếp hỏi gì, não em đang đơ 🤕",
+            ]
+            await msg.reply_text(random.choice(fallbacks))
+        return
 
-    reply = chat_with_ai(msg.chat_id, enriched_text, username)
-    if reply:
-        await msg.reply_text(reply)
+    elif intent == "image":
+        # Thử Serper Images trước, fallback về Pinterest random
+        images = _serper_images(text, num=5)
+        sent = False
+        for img in images:
+            image_url = img.get("imageUrl", "")
+            title = img.get("title", "")
+            source = img.get("link", "")
+            if not image_url:
+                continue
+            caption = f"🔍 <b>{title}</b>\n<a href=\"{source}\">Nguồn</a>" if title else None
+            try:
+                # Tải ảnh về rồi gửi dạng document để xem được full-res
+                r = requests.get(image_url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+                import io
+                ext = image_url.split("?")[0].rsplit(".", 1)[-1].lower()
+                if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+                    ext = "jpg"
+                filename = f"{title[:40].strip() or 'image'}.{ext}"
+                bio = io.BytesIO(r.content)
+                bio.name = filename
+                await msg.reply_document(
+                    document=bio,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+                sent = True
+                break
+            except Exception as e:
+                logger.debug(f"[Serper/image] Lỗi gửi {image_url}: {e}")
+                continue
+        if not sent:
+            await random_all(update, context)
+        return
+
     else:
-        # Fallback vui vẻ khi AI lỗi
-        fallbacks = [
-            "Ủa AI của em đang ngủ rồi sếp ơi 😴 Thử lại sau nha~",
-            "Vcl server lag quá sếp ơi, em chịu 😭 Hỏi lại đi ạ!",
-            "Em hỏng hiểu sếp hỏi gì, não em đang đơ 🤕",
-        ]
-        await msg.reply_text(random.choice(fallbacks))
+        reply = chat_with_ai(msg.chat_id, text, username)
+        if reply:
+            await msg.reply_text(reply)
+        else:
+            fallbacks = [
+                "Ủa AI của em đang ngủ rồi sếp ơi 😴 Thử lại sau nha~",
+                "Vcl server lag quá sếp ơi, em chịu 😭 Hỏi lại đi ạ!",
+                "Em hỏng hiểu sếp hỏi gì, não em đang đơ 🤕",
+            ]
+            await msg.reply_text(random.choice(fallbacks))
 
 
 async def addcat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
