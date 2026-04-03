@@ -1,8 +1,10 @@
 import os
+import io
 import json
 import sqlite3
 import random
 import logging
+import tempfile
 import collections
 from pathlib import Path
 from typing import Optional
@@ -216,6 +218,50 @@ def _serper_videos(query: str, num: int = 3) -> list[dict]:
     except Exception as e:
         logger.warning(f"[Serper/videos] Lỗi: {e}")
         return []
+
+
+def _download_file(url: str, suffix: str = ".jpg") -> Optional[str]:
+    """Tải URL về file tạm trên disk, trả về đường dẫn file."""
+    try:
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"}, stream=True)
+        r.raise_for_status()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+            for chunk in r.iter_content(chunk_size=65536):
+                f.write(chunk)
+            return f.name
+    except Exception as e:
+        logger.debug(f"[Download] Lỗi tải {url}: {e}")
+        return None
+
+
+def _download_video_ytdlp(url: str) -> Optional[str]:
+    """Dùng yt-dlp tải video về file tạm, trả về đường dận."""
+    try:
+        import yt_dlp  # noqa
+        tmp_dir = tempfile.mkdtemp()
+        outtmpl = os.path.join(tmp_dir, "%(title).40s.%(ext)s")
+        ydl_opts = {
+            "outtmpl": outtmpl,
+            "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
+            "quiet": True,
+            "no_warnings": True,
+            "max_filesize": 50 * 1024 * 1024,  # 50MB giới hạn Telegram
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            # yt-dlp có thể đổi ext sau merge
+            for ext in ("", ".mp4", ".mkv", ".webm"):
+                candidate = filename if not ext else os.path.splitext(filename)[0] + ext
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+    except ImportError:
+        logger.warning("[yt-dlp] Chưa cài yt-dlp, chạy: pip install yt-dlp")
+        return None
+    except Exception as e:
+        logger.warning(f"[yt-dlp] Lỗi tải {url}: {e}")
+        return None
 
 
 # ============ TỪ KHÓA PINTEREST THEO THỂ LOẠI ============
@@ -1092,12 +1138,30 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply = chat_with_ai(msg.chat_id, enriched_text, username)
         if reply:
             await msg.reply_text(reply)
-        # Gửi thêm video nếu có
+        # Gửi thêm video nếu có (tải về máy rồi send)
         videos = _serper_videos(text, num=3)
         for v in videos:
             title = v.get("title", "")
             link = v.get("link", "")
-            if link:
+            if not link:
+                continue
+            await context.bot.send_chat_action(chat_id=msg.chat_id, action="upload_video")
+            vpath = _download_video_ytdlp(link)
+            if vpath:
+                try:
+                    with open(vpath, "rb") as vf:
+                        await msg.reply_video(
+                            video=vf,
+                            caption=f"🎬 <b>{title}</b>" if title else None,
+                            parse_mode="HTML",
+                            supports_streaming=True,
+                        )
+                finally:
+                    try:
+                        os.remove(vpath)
+                    except Exception:
+                        pass
+            else:
                 await msg.reply_text(f"🎬 <b>{title}</b>\n{link}", parse_mode="HTML")
         if not reply:
             fallbacks = [
