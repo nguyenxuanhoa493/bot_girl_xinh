@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 AI_BASE_URL = os.getenv("AI_BASE_URL", "http://localhost:20128/v1")
 AI_MODEL: Optional[str] = None  # lazy load khi khởi động
-AI_HISTORY_MAX = 10  # số lượt hội thoại giữ lại per chat
+AI_HISTORY_MAX = 20  # số lượt hội thoại giữ lại per chat
 
 _AI_CONFIG_FILE = Path(__file__).parent / "data" / "ai_config.json"
 
@@ -889,10 +889,34 @@ def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     if chat_type == "private":
         logger.debug(f"[AI-FILTER] ✅ Private chat — cho phép")
         return True
-    if chat_id in ALLOWED_GROUP_IDS:
-        logger.debug(f"[AI-FILTER] ✅ Nhóm được phép — cho phép")
+
+    if chat_id not in ALLOWED_GROUP_IDS:
+        logger.debug(f"[AI-FILTER] ❌ chat_id={chat_id} không nằm trong whitelist")
+        return False
+
+    # Trong nhóm: chỉ reply khi được @mention hoặc có _IMG_TRIGGERS
+    text = msg.text or ""
+    bot_username = context.bot.username or ""
+
+    is_mentioned = bot_username and f"@{bot_username}" in text
+    _IMG_TRIGGERS = [
+        "ảnh", "hình", "pic", "photo", "gái", "girl", "gửi ảnh", "cho xem",
+        "có ảnh", "có hình", "coi ảnh", "xem ảnh", "show ảnh",
+    ]
+    has_img_trigger = any(kw in text.lower() for kw in _IMG_TRIGGERS)
+
+    if is_mentioned:
+        logger.debug(f"[AI-FILTER] ✅ Được @mention — cho phép")
         return True
-    logger.debug(f"[AI-FILTER] ❌ chat_id={chat_id} không nằm trong whitelist")
+    if has_img_trigger:
+        logger.debug(f"[AI-FILTER] ✅ Có từ khoá ảnh — cho phép")
+        return True
+
+    # Không thoả điều kiện: âm thầm lưu vào history để nhớ ngữ cảnh nhóm
+    username = (msg.from_user.first_name or msg.from_user.username or "?") if msg.from_user else "?"
+    history = _chat_histories.setdefault(chat_id, collections.deque(maxlen=AI_HISTORY_MAX * 2))
+    history.append({"role": "user", "content": f"[{username}]: {text}"})
+    logger.debug(f"[AI-FILTER] 👁 Ghi nhớ (không reply): [{username}]: {text[:60]}")
     return False
 
 
@@ -922,7 +946,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ]
     text_lower = text.lower()
     if any(kw in text_lower for kw in _IMG_TRIGGERS):
-        _img_actions = ["random_all", "/trachieu", "/trada", "/tradavideo", "/musicque"]
+        _img_actions = ["random_all"]
         chosen = random.choice(_img_actions)
         logger.info(f"[AI] Detect yêu cầu ảnh từ @{user.username}, chọn: {chosen}")
         if chosen == "random_all":
