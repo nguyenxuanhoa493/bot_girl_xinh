@@ -6,4 +6,3 @@ opencv-python-headless
 numpy
 flask>=3.0.0
 selenium>=4.20.0
-yt-dlp>=2024.1.0
