@@ -1065,6 +1065,38 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def groupinfo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hiện thông tin nhóm/chat hiện tại."""
+    chat = update.effective_chat
+    msg = update.message
+
+    lines = [
+        "📋 <b>Thông tin chat hiện tại</b>",
+        f"🆔 <b>Chat ID:</b> <code>{chat.id}</code>",
+        f"📌 <b>Loại:</b> {chat.type}",
+    ]
+
+    if chat.title:
+        lines.append(f"📛 <b>Tên:</b> {chat.title}")
+    if chat.username:
+        lines.append(f"🔗 <b>Username:</b> @{chat.username}")
+
+    try:
+        count = await context.bot.get_chat_member_count(chat.id)
+        lines.append(f"👥 <b>Thành viên:</b> {count}")
+    except Exception:
+        pass
+
+    try:
+        bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+        status = bot_member.status
+        lines.append(f"🤖 <b>Quyền bot:</b> {status}")
+    except Exception:
+        pass
+
+    await msg.reply_text("\n".join(lines), parse_mode="HTML")
+
+
 async def _set_commands(app: Application) -> None:
     """Đăng ký danh sách lệnh để Telegram hiện gợi ý khi gõ /."""
     commands = []
@@ -1078,6 +1110,7 @@ async def _set_commands(app: Application) -> None:
         BotCommand("admin", "🔧 Quản lý từ khóa & category"),
         BotCommand("model", "🤖 Chọn model AI"),
         BotCommand("clearchat", "🧹 Xóa lịch sử trò chuyện AI"),
+        BotCommand("groupinfo", "📋 Thông tin nhóm/chat hiện tại"),
     ]
     await app.bot.set_my_commands(commands)
     logger.info(f"[Bot] Đã đăng ký {len(commands)} lệnh")
@@ -1107,6 +1140,7 @@ def main() -> None:
     app.add_handler(CommandHandler("addcat", addcat))
     app.add_handler(CommandHandler("clearchat", clearchat))
     app.add_handler(CommandHandler("model", model_command))
+    app.add_handler(CommandHandler("groupinfo", groupinfo))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^(cat:|del:|add_prompt:|admin_back|noop|addcat_prompt|delcat_menu|delcat:|delcat_confirm:)"))
     app.add_handler(CallbackQueryHandler(model_callback, pattern=r"^setmodel:"))
 
