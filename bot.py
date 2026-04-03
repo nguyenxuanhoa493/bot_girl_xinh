@@ -19,9 +19,11 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 load_dotenv()
 
+DEBUG = os.getenv("BOT_DEBUG", "false").lower() in ("1", "true", "yes")
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG,
+    level=logging.DEBUG if DEBUG else logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
@@ -913,15 +915,20 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         text = "chào em"
 
-    # Detect câu hỏi muốn xem ảnh → tự động chạy random
+    # Detect câu hỏi muốn xem ảnh → random 1 trong các hành động
     _IMG_TRIGGERS = [
         "ảnh", "hình", "pic", "photo", "gái", "girl", "gửi ảnh", "cho xem",
         "có ảnh", "có hình", "coi ảnh", "xem ảnh", "show ảnh",
     ]
     text_lower = text.lower()
     if any(kw in text_lower for kw in _IMG_TRIGGERS):
-        logger.info(f"[AI] Detect yêu cầu ảnh từ @{user.username}, tự chạy random")
-        await random_all(update, context)
+        _img_actions = ["random_all", "/trachieu", "/trada", "/tradavideo", "/musicque"]
+        chosen = random.choice(_img_actions)
+        logger.info(f"[AI] Detect yêu cầu ảnh từ @{user.username}, chọn: {chosen}")
+        if chosen == "random_all":
+            await random_all(update, context)
+        else:
+            await context.bot.send_message(chat_id=msg.chat_id, text=chosen)
         return
 
     logger.info(f"[AI] @{user.username}({user.id}) hỏi: {text[:80]}")
