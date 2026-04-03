@@ -3,7 +3,9 @@ import json
 import sqlite3
 import random
 import logging
+import collections
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -22,6 +24,106 @@ logging.basicConfig(
     level=logging.DEBUG,
 )
 logger = logging.getLogger(__name__)
+
+# ============ CONFIG AI CHAT ============
+
+AI_BASE_URL = os.getenv("AI_BASE_URL", "http://localhost:20128/v1")
+AI_MODEL: Optional[str] = None  # lazy load khi khởi động
+AI_HISTORY_MAX = 10  # số lượt hội thoại giữ lại per chat
+
+_AI_CONFIG_FILE = Path(__file__).parent / "data" / "ai_config.json"
+
+
+def _load_ai_config() -> None:
+    """Load AI config (model đã chọn) từ file JSON."""
+    global AI_MODEL
+    try:
+        if _AI_CONFIG_FILE.exists():
+            data = json.loads(_AI_CONFIG_FILE.read_text())
+            AI_MODEL = data.get("model") or None
+            if AI_MODEL:
+                logger.info(f"[AI] Load model từ config: {AI_MODEL}")
+    except Exception as e:
+        logger.warning(f"[AI] Không đọc được ai_config.json: {e}")
+
+
+def _save_ai_config() -> None:
+    """Lưu model đang dùng vào data/ai_config.json."""
+    try:
+        _AI_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _AI_CONFIG_FILE.write_text(json.dumps({"model": AI_MODEL}, ensure_ascii=False, indent=2))
+    except Exception as e:
+        logger.warning(f"[AI] Không lưu được ai_config.json: {e}")
+
+
+_load_ai_config()
+
+# Lịch sử hội thoại: {chat_id: deque([{role, content}, ...])}
+_chat_histories: dict[int, collections.deque] = {}
+
+_AI_SYSTEM_PROMPT = """Mày là "Bé Thư" — thư ký riêng siêu cute của nhóm, chuyên phục vụ team anh em mê gái.
+
+Tính cách:
+- Gen Z xịn xò, ăn nói tếu táo, hài hước bá đạo
+- Luôn ninh bợ, chiều chuộng các sếp trong nhóm
+- Mê gái không kém gì anh em, hay bình luận ảnh gái cùng
+- Dùng tiếng Việt Gen Z: "cc", "vcl", "bro", "sếp", "ông", "thánh", "đỉnh của chóp", "bắn tim", v.v.
+- Kết câu bằng emoji phù hợp, đừng lạm dụng quá nhiều
+- Trả lời ngắn gọn súc tích, đừng dài dòng
+- Nếu anh em hỏi về gái/ảnh đẹp thì nhiệt tình hỗ trợ, gợi ý dùng lệnh /girl /sexy /bikini
+- Nếu bị chọc ghẹo thì đáp trả duyên dáng, không giận dỗi
+- Đừng bao giờ phá vỡ nhân vật, mày là Bé Thư thật sự
+"""
+
+
+def _get_ai_model() -> Optional[str]:
+    """Lấy model từ config hoặc fallback model đầu tiên từ API."""
+    global AI_MODEL
+    if AI_MODEL:
+        return AI_MODEL
+    try:
+        resp = requests.get(f"{AI_BASE_URL}/models", timeout=5)
+        resp.raise_for_status()
+        models = resp.json().get("data", [])
+        if models:
+            AI_MODEL = models[0]["id"]
+            logger.info(f"[AI] Dùng model mặc định: {AI_MODEL}")
+            _save_ai_config()
+    except Exception as e:
+        logger.warning(f"[AI] Không lấy được model: {e}")
+    return AI_MODEL
+
+
+def chat_with_ai(chat_id: int, user_message: str, username: str = "") -> Optional[str]:
+    """Gọi LLM API với lịch sử hội thoại, trả về reply hoặc None nếu lỗi."""
+    model = _get_ai_model()
+    if not model:
+        return None
+
+    history = _chat_histories.setdefault(chat_id, collections.deque(maxlen=AI_HISTORY_MAX * 2))
+
+    # Thêm context username nếu có
+    content = f"[{username}]: {user_message}" if username else user_message
+    history.append({"role": "user", "content": content})
+
+    messages = [{"role": "system", "content": _AI_SYSTEM_PROMPT}] + list(history)
+
+    try:
+        resp = requests.post(
+            f"{AI_BASE_URL}/chat/completions",
+            json={"model": model, "messages": messages, "stream": False, "max_tokens": 300},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        reply = resp.json()["choices"][0]["message"]["content"].strip()
+        history.append({"role": "assistant", "content": reply})
+        return reply
+    except Exception as e:
+        logger.warning(f"[AI] Lỗi gọi API: {e}")
+        # Xóa tin nhắn vừa thêm nếu lỗi
+        if history and history[-1]["role"] == "user":
+            history.pop()
+        return None
 
 # ============ TỪ KHÓA PINTEREST THEO THỂ LOẠI ============
 
@@ -730,6 +832,8 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Xử lý reply từ ForceReply trong admin menu."""
     action = context.user_data.pop("pending_action", None)
     if not action:
+        # Không có pending_action -> thử trả lời bằng AI
+        await handle_ai_chat(update, context)
         return
 
     text = update.message.text.strip()
@@ -762,6 +866,65 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"✅ Đã thêm <code>{text}</code> vào category <b>{category}</b>",
             parse_mode="HTML",
         )
+
+
+def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Kiểm tra có nên để AI reply không."""
+    msg = update.message
+    if not msg or not msg.text:
+        return False
+
+    chat_type = msg.chat.type  # "private", "group", "supergroup", "channel"
+
+    # Luôn reply trong private chat
+    if chat_type == "private":
+        return True
+
+    # Trong group: reply khi được mention hoặc reply vào tin nhắn của bot
+    bot_username = context.bot.username
+    if bot_username and f"@{bot_username}" in msg.text:
+        return True
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        if msg.reply_to_message.from_user.id == context.bot.id:
+            return True
+
+    return False
+
+
+async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xử lý tin nhắn bằng AI khi phù hợp."""
+    if not _should_ai_reply(update, context):
+        return
+
+    msg = update.message
+    user = msg.from_user
+    username = user.first_name or user.username or "sếp"
+
+    # Loại bỏ mention bot khỏi text để AI xử lý đúng
+    text = msg.text
+    bot_username = context.bot.username
+    if bot_username:
+        text = text.replace(f"@{bot_username}", "").strip()
+
+    if not text:
+        return
+
+    logger.info(f"[AI] @{user.username}({user.id}) hỏi: {text[:80]}")
+
+    # Hiện typing indicator
+    await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
+
+    reply = chat_with_ai(msg.chat_id, text, username)
+    if reply:
+        await msg.reply_text(reply)
+    else:
+        # Fallback vui vẻ khi AI lỗi
+        fallbacks = [
+            "Ủa AI của em đang ngủ rồi sếp ơi 😴 Thử lại sau nha~",
+            "Vcl server lag quá sếp ơi, em chịu 😭 Hỏi lại đi ạ!",
+            "Em hỏng hiểu sếp hỏi gì, não em đang đơ 🤕",
+        ]
+        await msg.reply_text(random.choice(fallbacks))
 
 
 async def addcat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -817,6 +980,72 @@ async def addkw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xử lý khi người dùng chọn model từ inline keyboard."""
+    global AI_MODEL
+    query = update.callback_query
+    await query.answer()
+
+    chosen = query.data[len("setmodel:"):]
+    AI_MODEL = chosen
+    _save_ai_config()
+    logger.info(f"[AI] Model đã đổi sang: {AI_MODEL}")
+
+    # Rebuild menu để cập nhật dấu ✅
+    try:
+        resp = requests.get(f"{AI_BASE_URL}/models", timeout=5)
+        resp.raise_for_status()
+        models = resp.json().get("data", [])
+    except Exception:
+        models = [{"id": chosen}]
+
+    await query.edit_message_text(
+        f"🤖 <b>Chọn model AI</b>\n"
+        f"Đang dùng: <code>{AI_MODEL}</code>",
+        reply_markup=_build_model_menu(models, AI_MODEL),
+        parse_mode="HTML",
+    )
+
+
+async def clearchat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xóa lịch sử hội thoại AI của chat hiện tại."""
+    chat_id = update.effective_chat.id
+    _chat_histories.pop(chat_id, None)
+    await update.message.reply_text("🧹 Em quên hết rồi, bắt đầu lại từ đầu nhé sếp~ 😘")
+
+
+def _build_model_menu(models: list[dict], current: Optional[str]) -> InlineKeyboardMarkup:
+    keyboard = []
+    for m in models:
+        mid = m["id"]
+        label = f"✅ {mid}" if mid == current else mid
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"setmodel:{mid}")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hiện menu chọn model AI."""
+    try:
+        resp = requests.get(f"{AI_BASE_URL}/models", timeout=5)
+        resp.raise_for_status()
+        models = resp.json().get("data", [])
+    except Exception as e:
+        await update.message.reply_text(f"❌ Không lấy được danh sách model: {e}")
+        return
+
+    if not models:
+        await update.message.reply_text("❌ Không có model nào khả dụng.")
+        return
+
+    current = _get_ai_model()
+    await update.message.reply_text(
+        f"🤖 <b>Chọn model AI</b>\n"
+        f"Đang dùng: <code>{current or 'chưa chọn'}</code>",
+        reply_markup=_build_model_menu(models, current),
+        parse_mode="HTML",
+    )
+
+
 async def _set_commands(app: Application) -> None:
     """Đăng ký danh sách lệnh để Telegram hiện gợi ý khi gõ /."""
     commands = []
@@ -828,6 +1057,8 @@ async def _set_commands(app: Application) -> None:
         BotCommand("s", "🔍 Tìm theo từ khóa"),
         BotCommand("help", "💡 Hướng dẫn"),
         BotCommand("admin", "🔧 Quản lý từ khóa & category"),
+        BotCommand("model", "🤖 Chọn model AI"),
+        BotCommand("clearchat", "🧹 Xóa lịch sử trò chuyện AI"),
     ]
     await app.bot.set_my_commands(commands)
     logger.info(f"[Bot] Đã đăng ký {len(commands)} lệnh")
@@ -855,7 +1086,10 @@ def main() -> None:
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("addkw", addkw))
     app.add_handler(CommandHandler("addcat", addcat))
+    app.add_handler(CommandHandler("clearchat", clearchat))
+    app.add_handler(CommandHandler("model", model_command))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^(cat:|del:|add_prompt:|admin_back|noop|addcat_prompt|delcat_menu|delcat:|delcat_confirm:)"))
+    app.add_handler(CallbackQueryHandler(model_callback, pattern=r"^setmodel:"))
 
     logger.info("🚀 Bot đang chạy...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
