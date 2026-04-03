@@ -841,6 +841,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Xử lý reply từ ForceReply trong admin menu."""
+    msg = update.message
+    logger.debug(
+        f"[MSG] chat_id={msg.chat_id} chat_type={msg.chat.type} "
+        f"user=@{msg.from_user.username}({msg.from_user.id}) "
+        f"text={repr(msg.text[:60]) if msg.text else None}"
+    )
     action = context.user_data.pop("pending_action", None)
     if not action:
         # Không có pending_action -> thử trả lời bằng AI
@@ -883,6 +889,7 @@ def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     """Kiểm tra có nên để AI reply không."""
     msg = update.message
     if not msg or not msg.text:
+        logger.debug(f"[AI-FILTER] Bỏ qua: msg=None hoặc không có text")
         return False
 
     # Chỉ reply trong nhóm được phép hoặc private chat
@@ -890,10 +897,15 @@ def _should_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     chat_id = msg.chat_id
     chat_type = msg.chat.type
 
+    logger.debug(f"[AI-FILTER] chat_id={chat_id} chat_type={chat_type} allowed={ALLOWED_GROUP_IDS}")
+
     if chat_type == "private":
+        logger.debug(f"[AI-FILTER] ✅ Private chat — cho phép")
         return True
     if chat_id in ALLOWED_GROUP_IDS:
+        logger.debug(f"[AI-FILTER] ✅ Nhóm được phép — cho phép")
         return True
+    logger.debug(f"[AI-FILTER] ❌ chat_id={chat_id} không nằm trong whitelist")
     return False
 
 
